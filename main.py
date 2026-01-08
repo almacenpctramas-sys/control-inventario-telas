@@ -3,101 +3,105 @@ import pandas as pd
 from datetime import datetime
 import io
 
-# Configuración de página
+# Configuración inicial de la página
 st.set_page_config(page_title="Control Telas Pro", layout="wide")
 
 st.title("📦 Sistema de Inventario Almacenes 18 y 19")
 
-# --- 1. INICIALIZACIÓN DE MEMORIA (Caja de Seguridad) ---
-if 'df_inventario' not in st.session_state:
-    st.session_state.df_inventario = None
+# --- 1. MEMORIA PERSISTENTE (Aquí es donde evitamos que se borre) ---
+if 'df_master' not in st.session_state:
+    st.session_state.df_master = None
 
-# --- 2. CARGA DE ARCHIVO (Solo se muestra si no hay datos en memoria) ---
-if st.session_state.df_inventario is None:
-    st.info("👋 Para comenzar, sube tu archivo de Excel.")
-    archivo = st.file_uploader("Subir archivo de inventario", type=["xlsx"])
+# --- 2. CARGA DEL ARCHIVO (Solo aparece si la memoria está vacía) ---
+if st.session_state.df_master is None:
+    st.info("👋 Por favor, sube tu archivo Excel para empezar el inventario.")
+    archivo_subido = st.file_uploader("Selecciona tu archivo .xlsx", type=["xlsx"])
     
-    if archivo:
-        # Cargamos el archivo una sola vez
-        df_original = pd.read_excel(archivo, skiprows=2)
-        # Limpieza de nombres de columnas
-        df_original.columns = [str(c).strip() for c in df_original.columns]
-        # Guardamos en la memoria permanente de la sesión
-        st.session_state.df_inventario = df_original
+    if archivo_subido is not None:
+        # Cargamos los datos ignorando las primeras 2 filas de encabezado
+        df_temp = pd.read_excel(archivo_subido, skiprows=2)
+        # Limpiamos nombres de columnas
+        df_temp.columns = [str(c).strip() for c in df_temp.columns]
+        # Lo guardamos en la memoria 'maestra'
+        st.session_state.df_master = df_temp
         st.rerun()
 
-# --- 3. PANEL DE TRABAJO (Si el archivo ya está en memoria) ---
+# --- 3. PANEL DE CONTROL (Solo se ve si ya hay un archivo cargado) ---
 else:
-    df = st.session_state.df_inventario
+    # Usamos una referencia corta para trabajar más cómodo
+    df = st.session_state.df_master
 
-    # Barra lateral para gestión de archivos
+    # Botón en la barra lateral para resetear todo si es necesario
     with st.sidebar:
-        st.header("⚙️ Gestión")
-        if st.button("🗑️ Cargar un Nuevo Archivo"):
-            st.session_state.df_inventario = None
+        if st.button("🗑️ Cargar un archivo diferente"):
+            st.session_state.df_master = None
             st.rerun()
-        st.write("---")
-        st.success("Archivo cargado y protegido en memoria.")
 
     # Buscadores
-    st.subheader("🔍 Buscador de Artículos")
+    st.subheader("🔍 Localizar Artículos")
     col_b1, col_b2 = st.columns(2)
-    bus_cod = col_b1.text_input("Buscar por CÓDIGO (Ej: V1624):").upper()
-    bus_des = col_b2.text_input("Buscar por DESCRIPCIÓN (Ej: DECO STYLE):").upper()
+    bus_cod = col_b1.text_input("Buscar por CÓDIGO:").upper()
+    bus_des = col_b2.text_input("Buscar por DESCRIPCIÓN (ej: Deco Style):").upper()
 
-    # Lógica de filtrado
+    # Aplicar filtros
     mask = pd.Series([False] * len(df))
     if bus_cod:
         mask = df['CODIGO'].astype(str).str.upper().str.startswith(bus_cod)
     elif bus_des:
         mask = df['DESCRIPCION'].astype(str).str.upper().str.contains(bus_des)
 
-    # Sección de Marcado
-    if (bus_cod or bus_des):
-        encontrados = df[mask]
-        if not encontrados.empty:
-            st.write(f"✅ Se encontraron **{len(encontrados)}** artículos.")
-            st.dataframe(encontrados[['CODIGO', 'DESCRIPCION', 'Almacen 18', 'Almacen 19']])
+    # Lógica de Marcado (Botón de Guardado)
+    if bus_cod or bus_des:
+        resultados = df[mask]
+        if not resultados.empty:
+            st.write(f"📊 Encontrados: {len(resultados)} items")
+            st.dataframe(resultados[['CODIGO', 'DESCRIPCION', 'Almacen 18', 'Almacen 19']])
             
-            m1, m2 = st.columns(2)
-            if m1.button("📌 Marcar Todo en Almacén 18"):
-                st.session_state.df_inventario.loc[mask, 'Almacen 18'] = datetime.now().strftime("%d/%m/%Y")
-                st.toast("Actualizado en Almacén 18")
-                st.rerun()
-            if m2.button("📌 Marcar Todo en Almacén 19"):
-                st.session_state.df_inventario.loc[mask, 'Almacen 19'] = datetime.now().strftime("%d/%m/%Y")
-                st.toast("Actualizado en Almacén 19")
-                st.rerun()
+            # Botones para "Guardar" la marca en la memoria
+            c1, c2 = st.columns(2)
+            if c1.button("📌 GUARDAR FECHA EN ALM 18"):
+                st.session_state.df_master.loc[mask, 'Almacen 18'] = datetime.now().strftime("%d/%m/%Y")
+                st.success("¡Guardado en memoria! Puedes seguir buscando.")
+                # NO usamos rerun aquí para que no parpadee la pantalla
+            
+            if c2.button("📌 GUARDAR FECHA EN ALM 19"):
+                st.session_state.df_master.loc[mask, 'Almacen 19'] = datetime.now().strftime("%d/%m/%Y")
+                st.success("¡Guardado en memoria! Puedes seguir buscando.")
         else:
-            st.warning("No se encontraron coincidencias.")
+            st.warning("No hay resultados para esa búsqueda.")
 
     st.divider()
 
-    # --- 4. VISTA GENERAL Y FILTROS ---
-    st.subheader("📋 Estado del Inventario Completo")
+    # --- 4. VISUALIZACIÓN Y FILTROS DE ESTADO ---
+    st.subheader("📋 Revisión de Inventario Completo")
     
-    col_f1, col_f2, col_f3 = st.columns(3)
+    # Selector de filtros que NO borra los datos
+    opcion_filtro = st.radio(
+        "Ver lista de:",
+        ["Todos los artículos", "Solo pendientes Almacén 18", "Solo pendientes Almacén 19"],
+        horizontal=True
+    )
+
+    df_vista = df.copy()
     
-    # Usamos un 'radio button' para que el filtro se mantenga fijo
-    filtro = col_f1.radio("Ver:", ["Todos", "Pendientes Alm 18", "Pendientes Alm 19"], horizontal=True)
+    if "18" in opcion_filtro:
+        df_vista = df_vista[df_vista['Almacen 18'].isna() | (df_vista['Almacen 18'].astype(str).isin(['0', 'nan', 'None']))]
+    elif "19" in opcion_filtro:
+        df_vista = df_vista[df_vista['Almacen 19'].isna() | (df_vista['Almacen 19'].astype(str).isin(['0', 'nan', 'None']))]
 
-    df_view = df.copy()
-    if filtro == "Pendientes Alm 18":
-        df_view = df_view[df_view['Almacen 18'].isna() | (df_view['Almacen 18'].astype(str).isin(['0', 'nan', 'None']))]
-    elif filtro == "Pendientes Alm 19":
-        df_view = df_view[df_view['Almacen 19'].isna() | (df_view['Almacen 19'].astype(str).isin(['0', 'nan', 'None']))]
+    st.dataframe(df_vista, use_container_width=True)
 
-    st.dataframe(df_view, use_container_width=True)
-
-    # --- 5. DESCARGA DE SEGURIDAD ---
+    # --- 5. BOTÓN DE DESCARGA FINAL ---
     st.write("---")
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+    st.write("Recuerda descargar tu archivo al finalizar para no perder los cambios.")
+    
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False)
     
     st.download_button(
-        label="📥 DESCARGAR EXCEL ACTUALIZADO",
-        data=output.getvalue(),
-        file_name=f"Inventario_Telas_{datetime.now().strftime('%d-%m-%H%M')}.xlsx",
+        label="📥 DESCARGAR EXCEL CON TODAS LAS FECHAS",
+        data=buffer.getvalue(),
+        file_name=f"Inventario_Final_{datetime.now().strftime('%H%M')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
