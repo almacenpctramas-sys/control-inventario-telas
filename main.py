@@ -18,7 +18,7 @@ if st.session_state.df_master is None:
     
     if archivo_subido is not None:
         df_temp = pd.read_excel(archivo_subido)
-        # Ajuste para archivos nuevos vs archivos ya procesados
+        # Si el excel es nuevo (tiene encabezados arriba), saltamos filas
         if "CODIGO" not in df_temp.columns:
             df_temp = pd.read_excel(archivo_subido, skiprows=2)
         
@@ -59,10 +59,10 @@ else:
         else:
             st.error("No se encontró nada.")
 
-    # --- BOTÓN DE DESCARGA SIEMPRE VISIBLE ---
-    st.write("---")
-    st.subheader("💾 Guardar Cambios en tu PC")
-    st.write("Haz clic aquí cada vez que marques algo para no perder el progreso:")
+    # --- BOTÓN DE DESCARGA (Fijo y Corregido) ---
+    st.divider()
+    st.subheader("💾 Guardar Progreso")
+    st.info("Haz clic aquí para descargar tu archivo actualizado antes de cerrar o refrescar.")
     
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -74,20 +74,21 @@ else:
         file_name=f"Inventario_Respaldo_{datetime.now().strftime('%H_%M')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    st.write("---")
+    st.divider()
 
     # --- 4. VISTA GENERAL ---
     st.subheader("📋 Revisión de Inventario")
     filtro = st.radio("Mostrar:", ["Todos", "Pendientes 18", "Pendientes 19"], horizontal=True)
     
     df_v = df.copy()
+    # Lógica de filtrado corregida (sin palabras extrañas)
     if "18" in filtro:
-        df_v = df_v[df_v['Almacen 18'].isna() | (df_v['Almacen 18'].astype(str).isin(['0', 'nan', 'None', ''] archeological))]
+        df_v = df_v[df_v['Almacen 18'].isna() | (df_v['Almacen 18'].astype(str).isin(['0', 'nan', 'None', '']))]
     elif "19" in filtro:
         df_v = df_v[df_v['Almacen 19'].isna() | (df_v['Almacen 19'].astype(str).isin(['0', 'nan', 'None', '']))]
 
     st.dataframe(df_v, use_container_width=True)
 
-    if st.button("🗑️ Salir y cargar otro archivo"):
+    if st.sidebar.button("🗑️ Salir y cargar otro archivo"):
         st.session_state.df_master = None
         st.rerun()
