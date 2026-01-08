@@ -1,94 +1,77 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
-import io
 
-st.set_page_config(page_title="Control Telas Pro", layout="wide")
+# Configuración de la página
+st.set_page_config(page_title="Inventario PC7", layout="wide")
 
-st.title("📦 Sistema de Inventario Almacenes 18 y 19")
+st.title("📊 Control de Inventario en Tiempo Real")
+st.write("Los cambios se guardan automáticamente en Google Sheets.")
 
-# --- 1. MEMORIA DE SESIÓN ---
-if 'df_master' not in st.session_state:
-    st.session_state.df_master = None
+# --- CONEXIÓN CON TU GOOGLE SHEET ---
+url = "https://docs.google.com/spreadsheets/d/1pCki91RhG37d6x9mw0bZ3XnVMWAFkQe3NxIq4a9rrvM/edit?usp=sharing"
 
-# --- 2. CARGA DE ARCHIVO ---
-if st.session_state.df_master is None:
-    st.info("👋 Sube el último Excel que descargaste para continuar.")
-    archivo_subido = st.file_uploader("Selecciona tu archivo Excel", type=["xlsx"])
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    # Leemos los datos (asumiendo que los datos reales están en la hoja principal)
+    df = conn.read(spreadsheet=url, ttl=0) # ttl=0 para que siempre lea lo más nuevo
     
-    if archivo_subido is not None:
-        df_temp = pd.read_excel(archivo_subido)
-        # Si el excel es nuevo (tiene encabezados arriba), saltamos filas
-        if "CODIGO" not in df_temp.columns:
-            df_temp = pd.read_excel(archivo_subido, skiprows=2)
-        
-        df_temp.columns = [str(c).strip() for c in df_temp.columns]
-        st.session_state.df_master = df_temp
-        st.rerun()
+    # Limpieza de columnas para evitar errores
+    df.columns = [str(c).strip().upper() for c in df.columns]
 
-# --- 3. PANEL DE TRABAJO ---
-else:
-    df = st.session_state.df_master
-
-    # Buscadores
-    st.subheader("🔍 Localizar y Registrar")
+    # --- BUSCADORES ---
+    st.subheader("🔍 Localizar Artículos")
     c1, c2 = st.columns(2)
-    bus_cod = c1.text_input("Código:").upper()
-    bus_des = c2.text_input("Descripción (ej: DECO STYLE):").upper()
+    bus_cod = c1.text_input("Código (Ej: C0108):").upper()
+    bus_des = c2.text_input("Descripción (Ej: DECO STYLE):").upper()
 
+    # Lógica de búsqueda
     mask = pd.Series([False] * len(df))
     if bus_cod:
-        mask = df['CODIGO'].astype(str).str.upper().str.startswith(bus_cod)
+        mask = df['CODIGO'].astype(str).str.upper().str.contains(bus_cod)
     elif bus_des:
         mask = df['DESCRIPCION'].astype(str).str.upper().str.contains(bus_des)
 
     if bus_cod or bus_des:
         res = df[mask]
         if not res.empty:
-            st.write(f"📊 Items encontrados: {len(res)}")
-            st.dataframe(res[['CODIGO', 'DESCRIPCION', 'Almacen 18', 'Almacen 19']])
+            st.write(f"✅ Encontrados: {len(res)} items")
+            st.dataframe(res[['CODIGO', 'DESCRIPCION', 'ALMACEN 18', 'ALMACEN 19']])
             
             b1, b2 = st.columns(2)
-            if b1.button("📌 REGISTRAR EN ALM 18"):
-                st.session_state.df_master.loc[mask, 'Almacen 18'] = datetime.now().strftime("%d/%m/%Y")
-                st.success("✅ Guardado en sesión.")
+            fecha_hoy = datetime.now().strftime("%d/%m/%Y")
             
+            if b1.button("📌 REGISTRAR EN ALM 18"):
+                df.loc[mask, 'ALMACEN 18'] = fecha_hoy
+                conn.update(spreadsheet=url, data=df)
+                st.success("Guardado en Google Sheets")
+                st.rerun()
+                
             if b2.button("📌 REGISTRAR EN ALM 19"):
-                st.session_state.df_master.loc[mask, 'Almacen 19'] = datetime.now().strftime("%d/%m/%Y")
-                st.success("✅ Guardado en sesión.")
+                df.loc[mask, 'ALMACEN 19'] = fecha_hoy
+                conn.update(spreadsheet=url, data=df)
+                st.success("Guardado en Google Sheets")
+                st.rerun()
         else:
-            st.error("No se encontró nada.")
+            st.warning("No se encontraron coincidencias.")
 
-    # --- BOTÓN DE DESCARGA (Fijo y Corregido) ---
-    st.divider()
-    st.subheader("💾 Guardar Progreso")
-    st.info("Haz clic aquí para descargar tu archivo actualizado antes de cerrar o refrescar.")
-    
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False)
-    
-    st.download_button(
-        label="📥 DESCARGAR EXCEL DE RESPALDO",
-        data=buffer.getvalue(),
-        file_name=f"Inventario_Respaldo_{datetime.now().strftime('%H_%M')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
     st.divider()
 
-    # --- 4. VISTA GENERAL ---
-    st.subheader("📋 Revisión de Inventario")
-    filtro = st.radio("Mostrar:", ["Todos", "Pendientes 18", "Pendientes 19"], horizontal=True)
-    
+    # --- VISTA DE PENDIENTES ---
+    st.subheader("📋 Estado Actual")
+    filtro = st.radio("Ver lista:", ["Todos", "Pendientes Alm 18", "Pendientes Alm 19"], horizontal=True)
+
     df_v = df.copy()
-    # Lógica de filtrado corregida (sin palabras extrañas)
     if "18" in filtro:
-        df_v = df_v[df_v['Almacen 18'].isna() | (df_v['Almacen 18'].astype(str).isin(['0', 'nan', 'None', '']))]
+        # Filtra si está vacío, es 0 o es None
+        df_v = df_v[df_v['ALMACEN 18'].isna() | (df_v['ALMACEN 18'].astype(str).isin(['0', 'nan', 'None', '']))]
     elif "19" in filtro:
-        df_v = df_v[df_v['Almacen 19'].isna() | (df_v['Almacen 19'].astype(str).isin(['0', 'nan', 'None', '']))]
+        df_v = df_v[df_v['ALMACEN 19'].isna() | (df_v['ALMACEN 19'].astype(str).isin(['0', 'nan', 'None', '']))]
 
     st.dataframe(df_v, use_container_width=True)
 
-    if st.sidebar.button("🗑️ Salir y cargar otro archivo"):
-        st.session_state.df_master = None
-        st.rerun()
+except Exception as e:
+    st.error("Error de conexión.")
+    st.info("Asegúrate de que el Google Sheet esté compartido como 'Editor' para 'Cualquier persona con el enlace'.")
+    st.write(e)
