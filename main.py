@@ -8,39 +8,40 @@ st.title("📊 Control de Inventario Almacenes 18 y 19")
 # --- CONFIGURACIÓN ---
 url_sheet = "https://docs.google.com/spreadsheets/d/1pCki91RhG37d6x9mw0bZ3XnVMWAFkQe3NxIq4a9rrvM/edit?usp=sharing"
 
-# PEGA AQUÍ EL ENLACE DE TU FORMULARIO (el que copiaste de "Opciones publicadas")
+# PEGA AQUÍ TU ENLACE DEL FORMULARIO
 url_form = "TU_LINK_AQUI" 
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Leemos la hoja sin saltar filas para analizarla
-    df_raw = conn.read(spreadsheet=url_sheet, ttl=0)
+    # Intentamos leer la "Hoja 1" específicamente, que es la que tiene tus datos
+    try:
+        df_raw = conn.read(spreadsheet=url_sheet, worksheet="Hoja 1", ttl=0)
+    except:
+        # Si falla, leemos la pestaña por defecto
+        df_raw = conn.read(spreadsheet=url_sheet, ttl=0)
     
     if df_raw.empty:
-        st.error("La hoja de cálculo parece estar vacía.")
+        st.error("No se encontraron datos. Revisa que la pestaña con las telas se llame 'Hoja 1'.")
     else:
-        # --- BUSCADOR INTELIGENTE DE ENCABEZADOS ---
-        # Buscamos la fila que contiene la palabra 'CODIGO'
+        # --- BUSCADOR DE TÍTULOS ---
         header_row = None
-        for i in range(len(df_raw)):
-            if 'CODIGO' in [str(x).upper().strip() for x in df_raw.iloc[i].values]:
+        for i in range(min(len(df_raw), 10)): # Buscamos en las primeras 10 filas
+            fila_texto = [str(x).upper().strip() for x in df_raw.iloc[i].values]
+            if 'CODIGO' in fila_texto:
                 header_row = i
                 break
         
         if header_row is not None:
-            # Reconfiguramos el dataframe desde esa fila
             df = df_raw.iloc[header_row:].copy()
             df.columns = [str(c).strip().upper() for c in df.iloc[0]]
             df = df[1:].reset_index(drop=True)
-            # Limpiamos columnas vacías
             df = df.loc[:, df.columns.notna()]
             
             st.subheader("🔍 Localizar Tela")
             bus = st.text_input("Ingresa Código o Descripción:").upper()
 
             if bus:
-                # Búsqueda flexible
                 mask = df['CODIGO'].astype(str).str.upper().str.contains(bus) | \
                        df['DESCRIPCION'].astype(str).str.upper().str.contains(bus)
                 res = df[mask]
@@ -49,7 +50,7 @@ try:
                     st.success(f"✅ Se encontraron {len(res)} artículos")
                     st.dataframe(res[['CODIGO', 'DESCRIPCION', 'ALMACEN 18', 'ALMACEN 19']])
                     
-                    st.info("Para registrar, usa el formulario:")
+                    st.info("Para registrar, haz clic en el botón:")
                     st.link_button("📝 REGISTRAR EN GOOGLE FORMS", url_form)
                 else:
                     st.warning("No se encontró el artículo.")
@@ -58,9 +59,9 @@ try:
             st.subheader("📋 Vista de Inventario")
             st.dataframe(df, use_container_width=True)
         else:
-            st.error("No se encontró la columna 'CODIGO'. Revisa que tus títulos estén en la hoja.")
-            st.write("Datos leídos actualmente:", df_raw.head())
+            st.warning("No encontré la columna 'CODIGO'. Mostrando datos detectados:")
+            st.dataframe(df_raw.head(10))
 
 except Exception as e:
-    st.error("Error crítico de conexión.")
+    st.error("Error de conexión.")
     st.write(f"Detalle: {e}")
