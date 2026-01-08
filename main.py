@@ -2,64 +2,75 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-st.set_page_config(page_title="Inventario PC7", layout="wide")
-st.title("📊 Control de Inventario Almacenes 18 y 19")
+# Configuración de página profesional
+st.set_page_config(page_title="Inventario PC7", layout="wide", initial_sidebar_state="collapsed")
 
-# Tu URL de Google Sheets
+st.markdown("# 📊 Sistema de Control de Inventario PC7")
+st.info("Consulta de stock en tiempo real y registro de ingresos.")
+
+# URL de tu base de datos
 url_sheet = "https://docs.google.com/spreadsheets/d/1pCki91RhG37d6x9mw0bZ3XnVMWAFkQe3NxIq4a9rrvM/edit?usp=sharing"
-
-# PEGA AQUÍ TU ENLACE DEL FORMULARIO
-url_form = "TU_LINK_AQUI" 
+# Link de tu formulario (asegúrate de que sea el correcto)
+url_form = "TU_LINK_DEL_FORMULARIO" 
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # LEER SIN ESPECIFICAR PESTAÑA (esto evita el error de "control characters")
-    df_raw = conn.read(spreadsheet=url_sheet, ttl=0)
+    # LEER TODO EL DOCUMENTO (Sin nombres de pestañas para evitar errores)
+    # Buscamos la primera pestaña que contenga datos
+    data_dict = conn.read(spreadsheet=url_sheet, ttl=0, worksheet=None)
     
-    # Limpiar columnas vacías y filas vacías
-    df = df_raw.dropna(how='all').dropna(axis=1, how='all')
+    # Seleccionamos la primera pestaña que tenga contenido
+    first_sheet_name = list(data_dict.keys())[0]
+    df = data_dict[first_sheet_name]
     
-    # BUSCADOR AUTOMÁTICO DE TÍTULOS
-    # Buscamos la fila donde esté la palabra 'CODIGO'
-    header_row = None
+    # --- INTELIGENCIA DE DATOS: Limpieza Automática ---
+    # Buscamos la fila donde realmente empiezan los títulos (CODIGO)
+    df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+    
+    # Identificar la fila del encabezado buscando 'CODIGO'
+    header_idx = None
     for i in range(len(df)):
-        if 'CODIGO' in [str(x).upper().strip() for x in df.iloc[i].values]:
-            header_row = i
+        if 'CODIGO' in [str(x).upper().strip() for x in df.iloc[i]]:
+            header_idx = i
             break
             
-    if header_row is not None:
-        # Reajustamos la tabla desde donde encontramos los títulos
-        df.columns = [str(c).strip().upper() for c in df.iloc[header_row]]
-        df = df.iloc[header_row + 1:].reset_index(drop=True)
+    if header_idx is not None:
+        # Reconstruir la tabla correctamente
+        df.columns = [str(c).strip().upper() for c in df.iloc[header_idx]]
+        df = df.iloc[header_idx + 1:].reset_index(drop=True)
         
-        st.subheader("🔍 Localizar Tela")
-        bus = st.text_input("Ingresa Código o Descripción:").upper()
-
-        if bus:
-            # Filtramos por Código o Descripción
-            mask = df['CODIGO'].astype(str).str.upper().str.contains(bus) | \
-                   df['DESCRIPCION'].astype(str).str.upper().str.contains(bus)
-            res = df[mask]
+        # Interfaz de búsqueda
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            busqueda = st.text_input("🔍 Buscar por Código o Nombre de Tela:").upper()
+        
+        if busqueda:
+            # Filtro inteligente que busca en múltiples columnas a la vez
+            resultado = df[df.apply(lambda row: busqueda in row.astype(str).get('CODIGO', '') or 
+                                               busqueda in row.astype(str).get('DESCRIPCION', ''), axis=1)]
             
-            if not res.empty:
-                st.success(f"✅ Artículos encontrados: {len(res)}")
-                # Seleccionamos solo las columnas que queremos ver
-                cols_finales = [c for c in ['CODIGO', 'DESCRIPCION', 'ALMACEN 18', 'ALMACEN 19'] if c in df.columns]
-                st.dataframe(res[cols_finales], use_container_width=True)
+            if not resultado.empty:
+                st.success(f"Se encontraron {len(resultado)} coincidencias.")
+                st.table(resultado[['CODIGO', 'DESCRIPCION', 'ALMACEN 18', 'ALMACEN 19']])
                 
-                st.info("Para registrar un movimiento, usa el botón:")
-                st.link_button("📝 REGISTRAR EN FORMULARIO", url_form)
+                # Botón de acción directo al formulario
+                st.markdown(f"""
+                <a href="{url_form}" target="_blank">
+                    <button style="background-color: #6c63ff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer;">
+                        📝 Registrar Entrada de Mercancía
+                    </button>
+                </a>
+                """, unsafe_allow_html=True)
             else:
-                st.warning("No se encontró el artículo.")
-
+                st.warning("No se encontró ningún artículo con ese criterio.")
+        
         st.divider()
-        st.subheader("📋 Inventario Completo")
-        st.dataframe(df, use_container_width=True)
+        with st.expander("Ver Inventario Completo"):
+            st.dataframe(df, use_container_width=True)
+            
     else:
-        st.error("No se detectaron los encabezados (CODIGO, DESCRIPCION).")
-        st.write("Datos detectados:", df.head())
+        st.error("No se pudo detectar la estructura de columnas en tu Excel. Revisa que diga 'CODIGO' en alguna celda.")
 
 except Exception as e:
-    st.error("Error de conexión.")
-    st.write(f"Detalle técnico: {e}")
+    st.error(f"Error de conexión: {str(e)}")
