@@ -5,61 +5,59 @@ import pandas as pd
 st.set_page_config(page_title="Inventario PC7", layout="wide")
 
 st.markdown("# 📊 Sistema de Control de Inventario PC7")
-st.info("Consulta de stock en tiempo real y registro de ingresos.")
+st.info("Consulta de stock y registro de artículos.")
 
 url_sheet = "https://docs.google.com/spreadsheets/d/1pCki91RhG37d6x9mw0bZ3XnVMWAFkQe3NxIq4a9rrvM/edit?usp=sharing"
-url_form = "TU_LINK_DEL_FORMULARIO" 
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Leemos la hoja completa sin procesar encabezados aún
-    df_raw = conn.read(spreadsheet=url_sheet, ttl=0, header=None)
+    # 1. Obtenemos todas las pestañas para encontrar la correcta
+    all_sheets = conn.read(spreadsheet=url_sheet, ttl=0, worksheet=None)
     
-    # --- BUSCADOR ULTRA-FLEXIBLE DE ENCABEZADOS ---
+    # Buscamos la pestaña que NO sea la de "Respuestas de formulario"
+    nombres_pestañas = list(all_sheets.keys())
+    pestaña_datos = nombres_pestañas[0]
+    for nombre in nombres_pestañas:
+        if "RESPUESTAS" not in nombre.upper() and "FORM" not in nombre.upper():
+            pestaña_datos = nombre
+            break
+
+    df_raw = all_sheets[pestaña_datos]
+
+    # 2. Localizar la fila 3 (donde dice 'Codigo')
     header_idx = None
     for i in range(len(df_raw)):
-        # Buscamos en cada fila si existe la palabra 'Codigo' o 'Código'
-        fila_valores = [str(x).strip().lower() for x in df_raw.iloc[i].values]
-        if any('codigo' in x or 'código' in x for x in fila_valores):
+        fila = [str(x).strip().lower() for x in df_raw.iloc[i].values]
+        if 'codigo' in fila:
             header_idx = i
             break
-            
-    if header_idx is not None:
-        # 1. Configurar los nombres de las columnas
-        columnas = [str(c).strip() for c in df_raw.iloc[header_idx]]
-        
-        # 2. Crear el DataFrame real con los datos debajo del encabezado
-        df = df_raw.iloc[header_idx + 1:].copy()
-        df.columns = columnas
-        df = df.dropna(subset=[df.columns[0]], how='all').reset_index(drop=True)
 
-        # Buscador
-        busqueda = st.text_input("🔍 Buscar por Código o Descripción:").strip()
+    if header_idx is not None:
+        # Extraemos los datos reales
+        df = df_raw.iloc[header_idx + 1:].copy()
+        df.columns = [str(c).strip() for c in df_raw.iloc[header_idx]]
         
+        # Limpiamos filas vacías y nos quedamos con las columnas de tu Excel
+        df = df.dropna(subset=[df.columns[0]], how='all').reset_index(drop=True)
+        columnas_visibles = ['Codigo', 'Descripcion', 'Almacen 18', 'Almacen 19']
+        df_final = df[[c for c in columnas_visibles if c in df.columns]]
+
+        # Buscador interactivo
+        busqueda = st.text_input("🔍 Buscar artículo (Código o Nombre):")
         if busqueda:
-            # Filtro que busca el texto en cualquier columna de la tabla
-            mask = df.apply(lambda row: busqueda.lower() in row.astype(str).str.lower().values, axis=1)
-            resultado = df[mask]
-            
+            resultado = df_final[df_final.apply(lambda row: busqueda.lower() in row.astype(str).str.lower().values, axis=1)]
             if not resultado.empty:
-                st.success(f"Se encontraron {len(resultado)} coincidencias.")
-                # Mostramos solo las columnas que vimos en tu captura
-                cols_visibles = [c for c in ['Codigo', 'Descripcion', 'Almacen 18', 'Almacen 19'] if c in df.columns]
-                st.table(resultado[cols_visibles])
-                
-                st.markdown(f'<a href="{url_form}" target="_blank"><button style="background-color: #6c63ff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer;">📝 Registrar Movimiento</button></a>', unsafe_allow_html=True)
+                st.table(resultado)
             else:
-                st.warning("No se encontraron resultados.")
+                st.warning("No se encontró el artículo.")
         
-        st.divider()
-        with st.expander("Ver Inventario Completo"):
-            st.dataframe(df, use_container_width=True)
+        # Mostrar todo el inventario guardado
+        st.subheader("📋 Artículos Inventariados")
+        st.dataframe(df_final, use_container_width=True)
             
     else:
-        # Si falla, mostramos qué está leyendo para debuggear
-        st.error("No se encontró la palabra 'Codigo' en las primeras filas.")
-        st.write("Datos detectados actualmente:", df_raw.head(5))
+        st.error(f"No encontré la columna 'Codigo' en la pestaña: {pestaña_datos}")
 
 except Exception as e:
-    st.error(f"Error crítico: {str(e)}")
+    st.error(f"Error de conexión: {str(e)}")
