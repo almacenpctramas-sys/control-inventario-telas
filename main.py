@@ -16,43 +16,58 @@ url_form = "TU_LINK_DEL_FORMULARIO"
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # LEER TODO EL DOCUMENTO (Sin nombres de pestañas para evitar errores)
-    # Buscamos la primera pestaña que contenga datos
-    data_dict = conn.read(spreadsheet=url_sheet, ttl=0, worksheet=None)
+    # 1. CAMBIO CLAVE: Leemos la hoja completa. 
+    # Si sabes el nombre de la pestaña (ej. "Hoja1"), es mejor poner worksheet="Hoja1"
+    df = conn.read(spreadsheet=url_sheet, ttl=0)
     
-    # Seleccionamos la primera pestaña que tenga contenido
-    first_sheet_name = list(data_dict.keys())[0]
-    df = data_dict[first_sheet_name]
-    
-    # --- INTELIGENCIA DE DATOS: Limpieza Automática ---
-    # Buscamos la fila donde realmente empiezan los títulos (CODIGO)
+    # Si por alguna razón df es un diccionario, extraemos la primera tabla
+    if isinstance(df, dict):
+        first_key = list(df.keys())[0]
+        df = df[first_key]
+
+    # --- INTELIGENCIA DE DATOS: Limpieza Inicial ---
+    # Eliminamos filas y columnas que estén totalmente vacías
     df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
     
-    # Identificar la fila del encabezado buscando 'CODIGO'
+    # 2. BÚSQUEDA DEL ENCABEZADO: Identificar la fila que contiene 'CODIGO'
     header_idx = None
     for i in range(len(df)):
-        if 'CODIGO' in [str(x).upper().strip() for x in df.iloc[i]]:
+        # Convertimos la fila actual en una lista de strings limpios
+        fila_lista = [str(x).upper().strip() for x in df.iloc[i].values]
+        if 'CODIGO' in fila_lista:
             header_idx = i
             break
             
     if header_idx is not None:
-        # Reconstruir la tabla correctamente
-        df.columns = [str(c).strip().upper() for c in df.iloc[header_idx]]
+        # Reasignamos los nombres de las columnas usando la fila encontrada
+        nuevas_columnas = [str(c).strip().upper() for c in df.iloc[header_idx]]
+        df.columns = nuevas_columnas
+        
+        # Nos quedamos solo con los datos que están debajo de ese encabezado
         df = df.iloc[header_idx + 1:].reset_index(drop=True)
         
+        # Limpieza de columnas "fantasma" (Unnamed)
+        df = df.loc[:, ~df.columns.str.contains('^UNNAMED')]
+
         # Interfaz de búsqueda
         col1, col2 = st.columns([2, 1])
         with col1:
             busqueda = st.text_input("🔍 Buscar por Código o Nombre de Tela:").upper()
         
         if busqueda:
-            # Filtro inteligente que busca en múltiples columnas a la vez
-            resultado = df[df.apply(lambda row: busqueda in row.astype(str).get('CODIGO', '') or 
-                                               busqueda in row.astype(str).get('DESCRIPCION', ''), axis=1)]
+            # 3. FILTRO CORREGIDO: Usamos una función que maneja errores si faltan columnas
+            def filtrar_fila(row):
+                texto_fila = " ".join(row.astype(str).values).upper()
+                return busqueda in texto_fila
+
+            resultado = df[df.apply(filtrar_fila, axis=1)]
             
             if not resultado.empty:
                 st.success(f"Se encontraron {len(resultado)} coincidencias.")
-                st.table(resultado[['CODIGO', 'DESCRIPCION', 'ALMACEN 18', 'ALMACEN 19']])
+                
+                # Seleccionamos solo las columnas importantes si existen
+                columnas_ver = [c for c in ['CODIGO', 'DESCRIPCION', 'ALMACEN 18', 'ALMACEN 19'] if c in df.columns]
+                st.table(resultado[columnas_ver])
                 
                 # Botón de acción directo al formulario
                 st.markdown(f"""
@@ -70,7 +85,8 @@ try:
             st.dataframe(df, use_container_width=True)
             
     else:
-        st.error("No se pudo detectar la estructura de columnas en tu Excel. Revisa que diga 'CODIGO' en alguna celda.")
+        st.error("No se detectó la columna 'CODIGO'. Asegúrate de que tu Excel tenga una columna llamada exactamente así.")
 
 except Exception as e:
-    st.error(f"Error de conexión: {str(e)}")
+    # Este bloque atrapará el error y nos dirá exactamente qué falla si persiste
+    st.error(f"Error de configuración: {str(e)}")
